@@ -1,4 +1,7 @@
 jupyterlab
 pandas
 numpy
+segeval
+seaborn
+opinionated
 cdp-data @ git+https://github.com/councildataproject/cdp-data@v0.0.11

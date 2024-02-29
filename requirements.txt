@@ -1,7 +1,15 @@
-jupyterlab
-pandas
-numpy
-segeval
-seaborn
-opinionated
+jupyterlab>=4,<5
+pandas>=1,<2
+numpy>=1,<2
+segeval>=2,<3
+seaborn>=0.13,<1
+opinionated>=0.0.2,<0.1
+scikit-learn>=1,<2
+autotrain-advanced>=0.7,<1
+datasets>=2,<3
+transformers>=4,<5
+python-dotenv>=1,<2
+tabulate>=0.9,<1
+tqdm>=4,<5
+sentence-transformers>=2,<3
 cdp-data @ git+https://github.com/councildataproject/cdp-data@v0.0.11

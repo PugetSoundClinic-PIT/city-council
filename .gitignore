@@ -130,3 +130,6 @@ index.tex
 # Project specific
 cdp-datasets/
 transcripts/
+seattle-transcripts/
+model-eval-results/
+autotrain-text-classification-temp/

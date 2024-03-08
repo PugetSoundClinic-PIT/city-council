@@ -133,3 +133,4 @@ transcripts/
 seattle-transcripts/
 model-eval-results/
 autotrain-text-classification-temp/
+whole-comment-seg-*-sentence-examples.csv

@@ -34,14 +34,14 @@ BASE_MODELS = {
     "bge": "BAAI/bge-base-en-v1.5",
     # "deberta": "microsoft/deberta-v3-base",
     # "bert-multilingual": "google-bert/bert-base-multilingual-cased",
-    # "mpnet": "sentence-transformers/all-mpnet-base-v2",
+    "mpnet": "sentence-transformers/all-mpnet-base-v2",
     "bert-uncased": "google-bert/bert-base-uncased",
-    "distilbert": "distilbert/distilbert-base-uncased",
+    # "distilbert": "distilbert/distilbert-base-uncased",
 }
 CONTEXT_WINDOW_SIZES = [
     "single",
     "three",
-    "five",
+    # "five",
 ]
 
 # Fine-tune default settings
@@ -56,7 +56,7 @@ FINE_TUNE_COMMAND_DICT = {
     "target_column": "label",
     "train_split": "train",
     "valid_split": "valid",
-    "epochs": 1,
+    "epochs": 3,
     "lr": 5e-5,
     "auto_find_batch_size": True,
     "seed": 12,

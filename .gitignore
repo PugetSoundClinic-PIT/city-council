@@ -134,3 +134,6 @@ seattle-transcripts/
 model-eval-results/
 autotrain-text-classification-temp/
 whole-comment-seg-*-sentence-examples.csv
+whole-pc-section-window-classifier/
+whole-pc-section-window-classifier-confusion.png
+whole-pc-section-window-classifier-misclassifications.csv

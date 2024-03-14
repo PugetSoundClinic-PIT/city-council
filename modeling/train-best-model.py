@@ -155,7 +155,7 @@ def evaluate(
 context_window_examples = pd.read_csv(
     str(
         TRAINING_DATA_DIR
-        / f"whole-comment-seg-three-sentence-examples.csv"
+        / "whole-comment-seg-three-sentence-examples.csv"
     ),
 )
 

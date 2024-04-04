@@ -31,11 +31,11 @@ load_dotenv()
 # Models used for testing, both fine-tune and semantic logit
 BASE_MODELS = {
     "gte": "thenlper/gte-base",
-    "bge": "BAAI/bge-base-en-v1.5",
+    # "bge": "BAAI/bge-base-en-v1.5",
     # "deberta": "microsoft/deberta-v3-base",
     # "bert-multilingual": "google-bert/bert-base-multilingual-cased",
     "mpnet": "sentence-transformers/all-mpnet-base-v2",
-    "bert-uncased": "google-bert/bert-base-uncased",
+    # "bert-uncased": "google-bert/bert-base-uncased",
     # "distilbert": "distilbert/distilbert-base-uncased",
 }
 CONTEXT_WINDOW_SIZES = [

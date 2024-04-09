@@ -22,6 +22,9 @@ from sklearn.model_selection import train_test_split
 from tabulate import tabulate
 from tqdm import tqdm
 from transformers import Pipeline, pipeline
+import opinionated  # noqa
+import matplotlib.pyplot as plt
+plt.style.use("opinionated_rc")
 
 ###############################################################################
 
@@ -41,7 +44,7 @@ BASE_MODELS = {
 CONTEXT_WINDOW_SIZES = [
     "single",
     "three",
-    # "five",
+    "five",
 ]
 
 # Fine-tune default settings
@@ -104,6 +107,8 @@ def cast_split_to_dataset(
 @dataclass
 class EvaluationResults(DataClassJsonMixin):
     model: str
+    context_window_size: str
+    holdout_council: str
     accuracy: float
     precision: float
     recall: float
@@ -113,6 +118,8 @@ class EvaluationResults(DataClassJsonMixin):
 
 def evaluate(
     model: LogisticRegressionCV | Pipeline,
+    context_window_size: str,
+    holdout_council: str,
     x_test: list[np.ndarray] | list[str],
     y_test: list[str],
     model_name: str,
@@ -150,8 +157,12 @@ def evaluate(
         f"Time/Pred: {perf_time}"
     )
 
-    # Create storage dir for model evals
-    this_model_eval_storage = EVAL_STORAGE_PATH / model_name
+    # Create storage dir for holdout council
+    this_model_eval_storage = EVAL_STORAGE_PATH / f"holdout-{holdout_council}"
+    this_model_eval_storage.mkdir(exist_ok=True)
+
+    # Create storage dir for this model
+    this_model_eval_storage = this_model_eval_storage / model_name
     this_model_eval_storage.mkdir(exist_ok=True)
 
     # Create confusion matrix display
@@ -159,6 +170,11 @@ def evaluate(
         y_test,
         y_pred,
     )
+
+    # Get figure to apply tightlayout and xaxis label rotation
+    plt.grid(False)
+    plt.xticks(rotation=45)
+    plt.tight_layout()
 
     # Save confusion matrix
     cm.figure_.savefig(this_model_eval_storage / "confusion.png")
@@ -181,6 +197,8 @@ def evaluate(
 
     return EvaluationResults(
         model=this_iter_model_name,
+        context_window_size=context_window_size,
+        holdout_council=holdout_council,
         accuracy=accuracy,
         precision=precision,
         recall=recall,
@@ -199,221 +217,289 @@ for context_window_size in tqdm(
     CONTEXT_WINDOW_SIZES,
     desc="Context window sizes",
 ):
-    # Load the data for that context window
-    context_window_examples = pd.read_csv(
-        str(
-            TRAINING_DATA_DIR
-            / f"whole-comment-seg-{context_window_size}-sentence-examples.csv"
-        ),
-    )
+    for holdout_council in tqdm(
+        [
+            "seattle",
+            "oakland",
+            "richmond",
+        ],
+        desc="Holdout councils",
+    ):
+        print(f"Holding out council: {holdout_council}")
+        print()
 
-    # Drop session_id column
-    context_window_examples = context_window_examples.drop(columns=["session_id"])
+        # Load the data for that context window
+        context_window_examples = pd.read_csv(
+            str(
+                TRAINING_DATA_DIR
+                / f"whole-comment-seg-{context_window_size}-sentence-examples.csv"
+            ),
+        )
 
-    # Create splits
-    train_df, test_and_valid_df = train_test_split(
-        context_window_examples,
-        test_size=0.4,
-        shuffle=True,
-        stratify=context_window_examples["label"],
-    )
-    valid_df, test_df = train_test_split(
-        test_and_valid_df,
-        test_size=0.5,
-        shuffle=True,
-        stratify=test_and_valid_df["label"],
-    )
+        # Split training data from holdout data
+        holdout_test_df = context_window_examples[
+            context_window_examples["council"] == holdout_council
+        ].copy()
+        context_window_examples = context_window_examples[
+            context_window_examples["council"] != holdout_council
+        ].copy()
 
-    # Create a dataframe where the rows are the different splits and there are three columns
-    # one column is the split name, the other columns are the counts of match
-    split_counts = []
-    for split_name, split_df in [
-        ("train", train_df),
-        ("valid", valid_df),
-        ("test", test_df),
-    ]:
-        split_counts.append(
+        # Drop council, session_id, and comment_or_hearing columns
+        holdout_test_df = holdout_test_df.drop(
+            columns=[
+                "council",
+                "session_id",
+                "comment_or_hearing",
+            ]
+        )
+        context_window_examples = context_window_examples.drop(
+            columns=[
+                "council",
+                "session_id",
+                "comment_or_hearing",
+            ]
+        )
+
+        # Create splits
+        train_df, valid_df = train_test_split(
+            context_window_examples,
+            test_size=0.2,
+            shuffle=True,
+            stratify=context_window_examples["label"],
+        )
+
+        # Create a dataframe where the rows are the different splits and there are three columns
+        # one column is the split name, the other columns are the counts of match
+        sem_logit_split_counts = []
+        for split_name, split_df in [
+            ("train", context_window_examples),
+            ("test", holdout_test_df),
+        ]:
+            sem_logit_split_counts.append(
+                {
+                    "split": split_name,
+                    **split_df["label"].value_counts().to_dict(),
+                }
+            )
+        sem_logit_split_counts_df = pd.DataFrame(sem_logit_split_counts)
+        print("Split counts for semantic logit:")
+        print(sem_logit_split_counts_df)
+        print()
+        ft_split_counts = []
+        for split_name, split_df in [
+            ("train", train_df),
+            ("valid", valid_df),
+            ("test", holdout_test_df),
+        ]:
+            ft_split_counts.append(
+                {
+                    "split": split_name,
+                    **split_df["label"].value_counts().to_dict(),
+                }
+            )
+        ft_split_counts_df = pd.DataFrame(ft_split_counts)
+        print("Split counts for fine-tuning:")
+        print(ft_split_counts_df)
+        print()
+
+        # Store class details required for feature construction
+        num_classes = context_window_examples["label"].nunique()
+        class_labels = list(context_window_examples["label"].unique())
+
+        # Create the datasets
+        train_ds = cast_split_to_dataset(
+            train_df,
+            num_classes,
+            class_labels,
+        )
+        valid_ds = cast_split_to_dataset(
+            valid_df,
+            num_classes,
+            class_labels,
+        )
+        holdout_test_ds = cast_split_to_dataset(
+            holdout_test_df,
+            num_classes,
+            class_labels,
+        )
+
+        # Store as dataset dict
+        ds_dict = datasets.DatasetDict(
             {
-                "split": split_name,
-                **split_df["label"].value_counts().to_dict(),
+                "train": train_ds,
+                "valid": valid_ds,
+                "test": holdout_test_ds,
             }
         )
-    split_counts_df = pd.DataFrame(split_counts)
-    print("Split counts:")
-    print(split_counts_df)
-    print()
 
-    # Store class details required for feature construction
-    num_classes = context_window_examples["label"].nunique()
-    class_labels = list(context_window_examples["label"].unique())
-
-    # Create the datasets
-    train_ds = cast_split_to_dataset(
-        train_df,
-        num_classes,
-        class_labels,
-    )
-    valid_ds = cast_split_to_dataset(
-        valid_df,
-        num_classes,
-        class_labels,
-    )
-    test_ds = cast_split_to_dataset(
-        test_df,
-        num_classes,
-        class_labels,
-    )
-
-    # Store as dataset dict
-    ds_dict = datasets.DatasetDict(
-        {
-            "train": train_ds,
-            "valid": valid_ds,
-            "test": test_ds,
-        }
-    )
-
-    # Push to hub
-    print("Pushing this fieldset to hub")
-    ds_dict.push_to_hub(
-        DEFAULT_HF_DATASET_PATH,
-        private=True,
-        token=os.environ["HF_AUTH_TOKEN"],
-    )
-    print()
-    print()
-
-    # Train each semantic logit model
-    for model_short_name, hf_model_path in tqdm(
-        BASE_MODELS.items(),
-        desc="Semantic logit models",
-        leave=False,
-    ):
-        # Set seed
-        np.random.seed(12)
-        random.seed(12)
-
-        this_iter_model_name = f"semantic-logit-{model_short_name}-{context_window_size}-sentences"
+        # Push to hub
+        print("Pushing this fieldset to hub")
+        ds_dict.push_to_hub(
+            DEFAULT_HF_DATASET_PATH,
+            private=True,
+            token=os.environ["HF_AUTH_TOKEN"],
+        )
         print()
-        print(f"Working on: {this_iter_model_name}")
-        try:
-            # Init sentence transformer
-            sentence_transformer = SentenceTransformer(hf_model_path)
+        print()
 
-            # Preprocess all of the text to embeddings
-            print("Preprocessing text to embeddings")
-            train_df["embedding"] = [
-                np.array(embed)
-                for embed in sentence_transformer.encode(
-                    train_df["text"].tolist(),
-                ).tolist()
-            ]
-            test_df["embedding"] = [
-                np.array(embed)
-                for embed in sentence_transformer.encode(
-                    test_df["text"].tolist(),
-                ).tolist()
-            ]
+        # Train each semantic logit model
+        for model_short_name, hf_model_path in tqdm(
+            BASE_MODELS.items(),
+            desc="Semantic logit models",
+            leave=False,
+        ):
+            # Set seed
+            np.random.seed(12)
+            random.seed(12)
 
-            # Train model
-            print("Training model")
-            clf = LogisticRegressionCV(
-                cv=10,
-                max_iter=5000,
-                random_state=12,
-                class_weight="balanced",
-            ).fit(
-                train_df["embedding"].tolist(),
-                train_df["label"].tolist(),
-            )
-
-            # Evaluate model
-            results.append(
-                evaluate(
-                    clf,
-                    test_df["embedding"].tolist(),
-                    test_df["label"].tolist(),
-                    this_iter_model_name,
-                    test_df,
-                ).to_dict(),
+            this_iter_model_name = (
+                f"semantic-logit-{model_short_name}-{context_window_size}-sentences"
             )
             print()
+            print(f"Working on: {this_iter_model_name}")
+            try:
+                # Init sentence transformer
+                sentence_transformer = SentenceTransformer(hf_model_path)
 
-        except Exception as e:
-            print(f"Error during: {this_iter_model_name}, Error: {e}")
-            results.append(
-                {
-                    "model": this_iter_model_name,
-                    "error_level": "semantic model training",
-                    "error": str(e),
-                }
+                # Preprocess all of the text to embeddings
+                print("Preprocessing text to embeddings")
+                context_window_examples["embedding"] = [
+                    np.array(embed)
+                    for embed in sentence_transformer.encode(
+                        context_window_examples["text"].tolist(),
+                    ).tolist()
+                ]
+                holdout_test_df["embedding"] = [
+                    np.array(embed)
+                    for embed in sentence_transformer.encode(
+                        holdout_test_df["text"].tolist(),
+                    ).tolist()
+                ]
+
+                # Train model
+                print("Training model")
+                clf = LogisticRegressionCV(
+                    cv=10,
+                    max_iter=5000,
+                    random_state=12,
+                    class_weight="balanced",
+                ).fit(
+                    context_window_examples["embedding"].tolist(),
+                    context_window_examples["label"].tolist(),
+                )
+
+                # Evaluate model
+                results.append(
+                    evaluate(
+                        model=clf,
+                        context_window_size=context_window_size,
+                        holdout_council=holdout_council,
+                        x_test=holdout_test_df["embedding"].tolist(),
+                        y_test=holdout_test_df["label"].tolist(),
+                        model_name=this_iter_model_name,
+                        df=holdout_test_df,
+                    ).to_dict(),
+                )
+                print()
+
+            except Exception as e:
+                print(f"Error during: {this_iter_model_name}, Error: {e}")
+                results.append(
+                    {
+                        "model": this_iter_model_name,
+                        "error_level": "semantic model training",
+                        "error": str(e),
+                    }
+                )
+
+        # Train each fine-tuned model
+        for model_short_name, hf_model_path in tqdm(
+            BASE_MODELS.items(),
+            desc="Fine-tune models",
+            leave=False,
+        ):
+            # Set seed
+            np.random.seed(12)
+            random.seed(12)
+
+            this_iter_model_name = (
+                f"fine-tune-{model_short_name}-{context_window_size}-sentences"
             )
+            print()
+            print(f"Working on: {this_iter_model_name}")
+            try:
+                # Delete existing temp storage if exists
+                if DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH.exists():
+                    shutil.rmtree(DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH)
 
-    # Train each fine-tuned model
-    for model_short_name, hf_model_path in tqdm(
-        BASE_MODELS.items(),
-        desc="Fine-tune models",
-        leave=False,
-    ):
-        # Set seed
-        np.random.seed(12)
-        random.seed(12)
+                # Update the fine-tune command dict
+                this_iter_command_dict = FINE_TUNE_COMMAND_DICT.copy()
+                this_iter_command_dict["model"] = hf_model_path
 
-        this_iter_model_name = f"fine-tune-{model_short_name}-{context_window_size}-sentences"
+                # Train the model
+                ft_train(
+                    this_iter_command_dict,
+                )
+
+                # Evaluate the model
+                ft_transformer_pipe = pipeline(
+                    task="text-classification",
+                    model=str(DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH),
+                    tokenizer=str(DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH),
+                    padding=True,
+                    truncation=True,
+                    max_length=DEFAULT_MODEL_MAX_SEQ_LENGTH,
+                )
+                results.append(
+                    evaluate(
+                        model=ft_transformer_pipe,
+                        context_window_size=context_window_size,
+                        holdout_council=holdout_council,
+                        x_test=holdout_test_df["text"].tolist(),
+                        y_test=holdout_test_df["label"].tolist(),
+                        model_name=this_iter_model_name,
+                        df=holdout_test_df,
+                    ).to_dict(),
+                )
+
+            except Exception as e:
+                print(f"Error during: {this_iter_model_name}, Error: {e}")
+                results.append(
+                    {
+                        "model": this_iter_model_name,
+                        "error_level": "fine-tune model training",
+                        "error": str(e),
+                    }
+                )
+
+            print()
+
+        # Print results
+        results_df = pd.DataFrame(results)
+        results_df = results_df.sort_values(by="f1", ascending=False).reset_index(
+            drop=True
+        )
+        results_df.to_csv("all-model-results.csv", index=False)
+        print("Current standings")
+        print(
+            tabulate(
+                results_df.head(10),
+                headers="keys",
+                tablefmt="psql",
+                showindex=False,
+            )
+        )
+
         print()
-        print(f"Working on: {this_iter_model_name}")
-        try:
-            # Delete existing temp storage if exists
-            if DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH.exists():
-                shutil.rmtree(DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH)
 
-            # Update the fine-tune command dict
-            this_iter_command_dict = FINE_TUNE_COMMAND_DICT.copy()
-            this_iter_command_dict["model"] = hf_model_path
-
-            # Train the model
-            ft_train(
-                this_iter_command_dict,
-            )
-
-            # Evaluate the model
-            ft_transformer_pipe = pipeline(
-                task="text-classification",
-                model=str(DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH),
-                tokenizer=str(DEFAULT_FINE_TUNE_TEMP_STORAGE_PATH),
-                padding=True,
-                truncation=True,
-                max_length=DEFAULT_MODEL_MAX_SEQ_LENGTH,
-            )
-            results.append(
-                evaluate(
-                    ft_transformer_pipe,
-                    test_df["text"].tolist(),
-                    test_df["label"].tolist(),
-                    this_iter_model_name,
-                    test_df,
-                ).to_dict(),
-            )
-
-        except Exception as e:
-            print(f"Error during: {this_iter_model_name}, Error: {e}")
-            results.append(
-                {
-                    "model": this_iter_model_name,
-                    "error_level": "fine-tune model training",
-                    "error": str(e),
-                }
-            )
-
-        print()
+    print()
+    print("-" * 80)
+    print()
 
     # Print results
     results_df = pd.DataFrame(results)
-    results_df = results_df.sort_values(by="f1", ascending=False).reset_index(
-        drop=True
-    )
+    results_df = results_df.sort_values(by="f1", ascending=False).reset_index(drop=True)
     results_df.to_csv("all-model-results.csv", index=False)
-    print("Current standings")
     print(
         tabulate(
             results_df.head(10),
@@ -423,11 +509,6 @@ for context_window_size in tqdm(
         )
     )
 
-    print()
-
-print()
-print("-" * 80)
-print()
 
 # Print results
 results_df = pd.DataFrame(results)
